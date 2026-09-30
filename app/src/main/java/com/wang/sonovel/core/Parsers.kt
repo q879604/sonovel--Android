@@ -53,7 +53,37 @@ private fun resolve(base: String, href: String?): String? {
 class SearchParser(private val ctx: SourceContext) {
     private val rule = ctx.rule
 
-    suspend fun search(keyword: String): List<SearchResult> {
+    suspend fun search(keyword: String): List<SearchResult> = fillMissingAuthors(fetchResults(keyword))
+
+    /**
+     * 搜索结果页不提供作者时（规则未配置 search.author），从详情页补全作者等信息，
+     * 这样按作者搜索、批量下载的“书名 + 作者”匹配也能生效。
+     */
+    private suspend fun fillMissingAuthors(list: List<SearchResult>): List<SearchResult> {
+        if (list.isEmpty() || !rule.search?.author.isNullOrBlank() || list.all { !it.author.isNullOrBlank() }) return list
+        val parser = BookParser(ctx)
+        return coroutineScope {
+            val sem = Semaphore(maxOf(1, minOf(8, ctx.crawl.concurrency.takeIf { it > 0 } ?: 8)))
+            list.map { sr ->
+                async(Dispatchers.IO) {
+                    if (!sr.author.isNullOrBlank()) return@async sr
+                    sem.withPermit {
+                        runCatching { parser.parse(sr.url) }.map { b ->
+                            sr.copy(
+                                author = b.author,
+                                category = sr.category ?: b.category,
+                                status = sr.status ?: b.status,
+                                latestChapter = sr.latestChapter ?: b.latestChapter,
+                                lastUpdateTime = sr.lastUpdateTime ?: b.lastUpdateTime,
+                            )
+                        }.getOrDefault(sr)
+                    }
+                }
+            }.awaitAll()
+        }
+    }
+
+    private suspend fun fetchResults(keyword: String): List<SearchResult> {
         val r = rule.search ?: return emptyList()
         if (rule.disabled) return emptyList()
         val searchUrl = processUrl(r.url.orEmpty(), keyword)

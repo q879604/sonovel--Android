@@ -19,7 +19,6 @@ data class AppSettings(
     val saveToPublic: Boolean = true,
     // [source]
     val language: String = "",
-    val activeRules: String = "main.json",
     val searchLimit: Int = 30,
     val searchFilter: Boolean = true,
     // [crawl]
@@ -43,8 +42,10 @@ data class AppSettings(
     // 外观
     val themeMode: ThemeMode = ThemeMode.SYSTEM,
     val dynamicColor: Boolean = true,
-    // 已停用的书源 key（file#url）
-    val disabledSources: Set<String> = emptySet(),
+    /** 用户手动设置的书源开关（key 为 file#url），未设置的书源使用默认状态 */
+    val sourceStates: Map<String, Boolean> = emptyMap(),
+    /** 旧版本的停用列表，仅用于迁移 */
+    val disabledSources: Set<String>? = null,
 ) {
     val format: ExportFormat get() = ExportFormat.of(extName)
 
@@ -110,12 +111,13 @@ class SettingsRepository(context: Context) {
                 extName = loaded.extName ?: d.extName,
                 txtEncoding = loaded.txtEncoding ?: d.txtEncoding,
                 language = loaded.language ?: d.language,
-                activeRules = loaded.activeRules ?: d.activeRules,
                 cfBypass = loaded.cfBypass ?: d.cfBypass,
                 qidianCookie = loaded.qidianCookie ?: d.qidianCookie,
                 proxyHost = loaded.proxyHost ?: d.proxyHost,
                 themeMode = loaded.themeMode ?: d.themeMode,
-                disabledSources = loaded.disabledSources ?: d.disabledSources,
+                // 旧版停用的书源迁移为“关闭”
+                sourceStates = loaded.disabledSources.orEmpty().associateWith { false } + loaded.sourceStates.orEmpty(),
+                disabledSources = null,
             )
         }.getOrDefault(AppSettings())
     }
@@ -126,7 +128,10 @@ class SettingsRepository(context: Context) {
         prefs.edit().putString("json", gson.toJson(next)).apply()
     }
 
-    fun reset() = update { AppSettings(themeMode = it.themeMode, dynamicColor = it.dynamicColor) }
+    /** 恢复默认设置（保留外观与书源开关） */
+    fun reset() = update {
+        AppSettings(themeMode = it.themeMode, dynamicColor = it.dynamicColor, sourceStates = it.sourceStates)
+    }
 }
 
 /** 搜索历史 */

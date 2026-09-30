@@ -8,6 +8,7 @@ import coil.disk.DiskCache
 import com.wang.sonovel.core.ChineseConverter
 import com.wang.sonovel.core.Http
 import com.wang.sonovel.core.JsEngine
+import com.wang.sonovel.core.UpdateChecker
 import com.wang.sonovel.data.HistoryRepository
 import com.wang.sonovel.data.LibraryRepository
 import com.wang.sonovel.data.RuleRepository
@@ -27,6 +28,7 @@ class AppGraph(context: Context) {
     val downloads = DownloadManager(context, settings, rules, library)
     val readerPrefs = ReaderPrefsRepository(context)
     val progress = ReadingProgressRepository(context)
+    val updater = UpdateChecker(context, settings)
 }
 
 class SoNovelApp : Application(), ImageLoaderFactory {

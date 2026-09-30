@@ -621,7 +621,7 @@ fun LinkDialog(initial: String, onDismiss: () -> Unit, onOpen: (String, String) 
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(
-                    "粘贴书籍详情页地址（适用于不支持搜索的书源），支持全部规则文件中的书源",
+                    "粘贴书籍详情页地址（适用于不支持搜索的书源），支持所有书源（包括未开启的）",
                     style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 OutlinedTextField(
@@ -631,7 +631,7 @@ fun LinkDialog(initial: String, onDismiss: () -> Unit, onOpen: (String, String) 
                 )
                 if (url.isNotEmpty()) {
                     Text(
-                        rule?.let { "匹配书源：${it.displayName}（${it.file}）" } ?: "未找到匹配的书源",
+                        rule?.let { "匹配书源：${it.displayName}" + if (g.rules.isEnabled(it)) "" else "（未开启，仍可下载）" } ?: "未找到匹配的书源",
                         style = MaterialTheme.typography.bodySmall,
                         color = if (rule != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
                     )

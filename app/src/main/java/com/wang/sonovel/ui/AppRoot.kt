@@ -49,6 +49,7 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.wang.sonovel.ExternalEvent
 import com.wang.sonovel.graph
+import com.wang.sonovel.ui.components.UpdateDialog
 import com.wang.sonovel.ui.screens.AboutScreen
 import com.wang.sonovel.ui.screens.BatchScreen
 import com.wang.sonovel.ui.screens.BookDetailScreen
@@ -85,6 +86,10 @@ fun AppRoot(events: MutableStateFlow<ExternalEvent?>) {
     var linkDialogUrl by remember { mutableStateOf<String?>(null) }
     val context = LocalContext.current
     val event by events.collectAsStateWithLifecycle()
+    val pendingUpdate by context.graph.updater.pending.collectAsStateWithLifecycle()
+
+    // 启动时检测一次新版本（失败时静默）
+    LaunchedEffect(Unit) { context.graph.updater.checkOnStartup() }
 
     LaunchedEffect(event) {
         when (val e = event) {
@@ -150,6 +155,14 @@ fun AppRoot(events: MutableStateFlow<ExternalEvent?>) {
                 )
             }
         }
+    }
+
+    pendingUpdate?.let { info ->
+        UpdateDialog(
+            info = info,
+            onLater = { context.graph.updater.dismiss() },
+            onIgnore = { context.graph.updater.ignore(info) },
+        )
     }
 
     linkDialogUrl?.let { initial ->

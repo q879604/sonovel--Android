@@ -12,6 +12,12 @@ val keystoreProps = Properties().apply {
     if (f.exists()) f.inputStream().use { load(it) }
 }
 
+// 更新检测地址：读取项目根目录 local.properties 的 update.url（该文件不提交到仓库），未配置时不检测更新
+val updateUrl: String = Properties().apply {
+    val f = rootProject.file("local.properties")
+    if (f.exists()) f.inputStream().use { load(it) }
+}.getProperty("update.url", "").trim()
+
 android {
     namespace = "com.wang.sonovel"
     compileSdk = 35
@@ -21,8 +27,10 @@ android {
         // Android 6.0+，覆盖绝大多数设备
         minSdk = 23
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 2
+        versionName = "2.0"
+
+        buildConfigField("String", "UPDATE_URL", "\"$updateUrl\"")
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }
