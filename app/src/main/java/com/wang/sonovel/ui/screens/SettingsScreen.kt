@@ -3,6 +3,7 @@ package com.wang.sonovel.ui.screens
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
+import android.widget.Toast
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -40,6 +41,7 @@ import androidx.compose.material.icons.outlined.Replay
 import androidx.compose.material.icons.outlined.RestartAlt
 import androidx.compose.material.icons.outlined.Router
 import androidx.compose.material.icons.outlined.Speed
+import androidx.compose.material.icons.outlined.SystemUpdate
 import androidx.compose.material.icons.outlined.TextFields
 import androidx.compose.material.icons.outlined.Timer
 import androidx.compose.material.icons.automirrored.outlined.ViewList
@@ -69,6 +71,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.wang.sonovel.BuildConfig
 import com.wang.sonovel.R
+import com.wang.sonovel.core.UpdateResult
 import com.wang.sonovel.data.AppSettings
 import com.wang.sonovel.data.ExportFormat
 import com.wang.sonovel.data.LangType
@@ -245,6 +248,8 @@ fun SettingsScreen(onAbout: () -> Unit) {
 @Composable
 fun AboutScreen(onBack: () -> Unit) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var checkingUpdate by remember { mutableStateOf(false) }
     fun open(url: String) = runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
     Scaffold(topBar = {
         TopAppBar(
@@ -282,8 +287,25 @@ fun AboutScreen(onBack: () -> Unit) {
                 }
             }
             Spacer(Modifier.height(8.dp))
+            if (context.graph.updater.enabled) {
+                SettingItem(
+                    "检查更新", if (checkingUpdate) "正在检查…" else "当前版本 ${BuildConfig.VERSION_NAME}",
+                    Icons.Outlined.SystemUpdate, enabled = !checkingUpdate,
+                    onClick = {
+                        checkingUpdate = true
+                        scope.launch {
+                            when (val r = context.graph.updater.check()) {
+                                is UpdateResult.Available -> context.graph.updater.show(r.info)
+                                UpdateResult.Latest -> Toast.makeText(context, "已是最新版本", Toast.LENGTH_SHORT).show()
+                                is UpdateResult.Failed -> Toast.makeText(context, "检查更新失败：${r.message}", Toast.LENGTH_SHORT).show()
+                            }
+                            checkingUpdate = false
+                        }
+                    },
+                )
+            }
             SettingItem("项目主页", "github.com/whykang/sonovel--Android", Icons.Outlined.Code, onClick = { open("https://github.com/whykang/sonovel--Android") })
-            SettingItem("书源说明", "各规则文件的适用场景与注意事项", Icons.Outlined.Description, onClick = {
+            SettingItem("书源说明", "各书源的适用场景与注意事项", Icons.Outlined.Description, onClick = {
                 open("https://github.com/freeok/so-novel/blob/main/BOOK_SOURCES.md")
             })
             SettingItem("推荐阅读器", "EPUB 推荐 Koodo Reader、Readest、静读天下 等", Icons.Outlined.Info)

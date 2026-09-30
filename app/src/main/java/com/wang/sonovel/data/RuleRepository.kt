@@ -78,29 +78,41 @@ class RuleRepository(private val context: Context, private val settings: Setting
         }.getOrDefault("")
     }
 
-    val activeFile: RuleFile?
-        get() = _files.value.firstOrNull { it.name == settings.current.activeRules } ?: _files.value.firstOrNull()
-
-    val activeRules: List<Rule> get() = activeFile?.rules.orEmpty()
-
+    /** 全部书源（所有规则文件合并为一个列表） */
     val allRules: List<Rule> get() = _files.value.flatMap { it.rules }
 
-    fun isEnabled(rule: Rule): Boolean =
-        !rule.disabled && disabledKey(rule) !in settings.current.disabledSources
+    /** 书源开关的存储 key */
+    fun stateKey(rule: Rule) = "${rule.file}#${rule.url}"
 
-    fun disabledKey(rule: Rule) = "${rule.file}#${rule.url}"
+    /** 未手动设置时的默认开关：所有书源默认开启，搜索时全部参与 */
+    fun defaultEnabled(rule: Rule): Boolean = true
+
+    fun isEnabled(rule: Rule): Boolean = settings.current.sourceStates[stateKey(rule)] ?: defaultEnabled(rule)
 
     fun setEnabled(rule: Rule, enabled: Boolean) = settings.update {
-        val key = disabledKey(rule)
-        it.copy(disabledSources = if (enabled) it.disabledSources - key else it.disabledSources + key)
+        val key = stateKey(rule)
+        // 与默认状态一致时不必记录
+        it.copy(sourceStates = if (enabled == defaultEnabled(rule)) it.sourceStates - key else it.sourceStates + (key to enabled))
     }
 
-    /** 可参与聚合搜索的书源 */
-    fun searchableRules(): List<Rule> = activeRules.filter { it.searchable && isEnabled(it) }
+    fun setAllEnabled(rules: List<Rule>, enabled: Boolean) = settings.update { st ->
+        val states = st.sourceStates.toMutableMap()
+        for (r in rules) {
+            val key = stateKey(r)
+            if (enabled == defaultEnabled(r)) states.remove(key) else states[key] = enabled
+        }
+        st.copy(sourceStates = states)
+    }
+
+    /** 所有书源恢复为默认开关 */
+    fun resetStates() = settings.update { it.copy(sourceStates = emptyMap()) }
+
+    /** 可参与聚合搜索的书源：所有已开启且支持搜索的书源 */
+    fun searchableRules(): List<Rule> = allRules.filter { it.searchable && isEnabled(it) }
 
     fun byKey(key: String): Rule? = allRules.firstOrNull { it.key == key }
 
-    /** 根据书籍链接匹配书源：优先当前激活文件，其次全部文件 */
+    /** 根据书籍链接匹配书源：优先已开启的书源，其次全部书源 */
     fun matchByUrl(bookUrl: String): Rule? {
         val url = bookUrl.trim()
         fun match(r: Rule): Boolean {
@@ -109,7 +121,8 @@ class RuleRepository(private val context: Context, private val settings: Setting
             val host = hostOf(base) ?: return false
             return hostOf(url)?.removePrefix("www.") == host.removePrefix("www.")
         }
-        return activeRules.firstOrNull(::match) ?: allRules.firstOrNull(::match)
+        val all = allRules
+        return all.firstOrNull { match(it) && isEnabled(it) } ?: all.firstOrNull(::match)
     }
 
     /** 导入规则文件，返回规则数量 */
@@ -123,16 +136,11 @@ class RuleRepository(private val context: Context, private val settings: Setting
         return rules.size
     }
 
-    /** 删除导入的规则文件（对内置文件则是恢复默认） */
+    /** 删除导入的规则文件（对内置文件则是恢复为内置版本） */
     fun deleteUserFile(name: String) {
         File(userDir, name).delete()
         reload()
-        if (_files.value.none { it.name == name } && settings.current.activeRules == name) {
-            settings.update { it.copy(activeRules = "main.json") }
-        }
     }
-
-    fun setActive(name: String) = settings.update { it.copy(activeRules = name) }
 
     private fun hostOf(url: String): String? = runCatching { java.net.URI(url).host }.getOrNull()
 

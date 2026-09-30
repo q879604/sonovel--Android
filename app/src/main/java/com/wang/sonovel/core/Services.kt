@@ -119,46 +119,19 @@ object SearchRanker {
         for (c in s) if (c.isLetterOrDigit()) append(c)
     }
 
-    private fun weight(s: Double, short: Boolean, long: Boolean): Double = when {
-        short -> when {
-            s == 1.0 -> 12.0
-            s >= 0.8 -> s * s * s * 8
-            s >= 0.7 -> s * 5
-            else -> 0.0
-        }
-        long -> when {
-            s == 1.0 -> 10.0
-            s >= 0.85 -> s * s * s * 8
-            s >= 0.7 -> s * s * 5
-            s >= 0.5 -> s * 3
-            else -> s * 1.2
-        }
-        else -> when {
-            s == 1.0 -> 10.0
-            s >= 0.85 -> s * s * s * 8
-            s >= 0.7 -> s * s * 5
-            s >= 0.5 -> s * 3
-            else -> 0.0
-        }
-    }
+    /** 结果与关键字的相关度：书名、作者分别计算相似度，取较高者（即书名或作者任一匹配即可） */
+    fun score(kw: String, sr: SearchResult): Double =
+        maxOf(similar(kw, sr.bookName), if (sr.author.isNullOrBlank()) 0.0 else similar(kw, sr.author))
 
-    /** 判断按书名还是作者搜索，过滤低相似度结果并排序 */
+    /** 同时按书名和作者匹配，过滤低相关度结果并按相关度排序 */
     fun filterAndSort(list: List<SearchResult>, kw: String, filter: Boolean): List<SearchResult> {
         if (list.isEmpty()) return list
-        val bookSim = list.associateWith { similar(kw, it.bookName) }
-        val authorSim = list.associateWith { similar(kw, it.author) }
-        val short = kw.length <= 4
-        val long = kw.length >= 10
-        val byAuthor = bookSim.values.sumOf { weight(it, short, long) } < authorSim.values.sumOf { weight(it, short, long) }
-        val sim = if (byAuthor) authorSim else bookSim
-        val cmp = Comparator<SearchResult> { a, b ->
-            val d = sim.getValue(b).compareTo(sim.getValue(a))
-            if (d != 0) d
-            else if (byAuthor) a.bookName.compareTo(b.bookName)
-            else a.author.orEmpty().compareTo(b.author.orEmpty())
-        }
-        val filtered = if (filter) list.filter { sim.getValue(it) > 0.25 }.sortedWith(cmp) else emptyList()
-        return filtered.ifEmpty { list.filter { sim.getValue(it) > 0 }.sortedWith(cmp) }
+        val scores = list.associateWith { score(kw, it) }
+        val cmp = compareByDescending<SearchResult> { scores.getValue(it) }
+            .thenBy { it.bookName }
+            .thenBy { it.author.orEmpty() }
+        val filtered = if (filter) list.filter { scores.getValue(it) > 0.25 } else emptyList()
+        return filtered.ifEmpty { list.filter { scores.getValue(it) > 0 } }.sortedWith(cmp)
     }
 }
 

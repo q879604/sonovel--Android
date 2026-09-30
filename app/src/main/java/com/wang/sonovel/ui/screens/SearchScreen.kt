@@ -148,7 +148,7 @@ class SearchViewModel(app: Application) : AndroidViewModel(app) {
         val key = state.value.sourceKey
         val sources: List<Rule> = if (key != null) listOfNotNull(g.rules.byKey(key)) else g.rules.searchableRules()
         if (sources.isEmpty()) {
-            state.update { it.copy(keyword = kw, results = emptyList(), sources = emptyList(), message = "当前规则文件中没有可搜索的书源，请在“书源”页切换规则文件") }
+            state.update { it.copy(keyword = kw, results = emptyList(), sources = emptyList(), message = "没有已开启的可搜索书源，请在“书源”页开启书源") }
             return
         }
         state.update {
@@ -207,8 +207,7 @@ fun SearchScreen(
     var showStatus by remember { mutableStateOf(false) }
     val focus = LocalFocusManager.current
 
-    val activeFile = ruleFiles.firstOrNull { it.name == settings.activeRules } ?: ruleFiles.firstOrNull()
-    val searchable = remember(activeFile, settings.disabledSources) { g.rules.searchableRules() }
+    val searchable = remember(ruleFiles, settings.sourceStates) { g.rules.searchableRules() }
     val selectedRule = ui.sourceKey?.let { g.rules.byKey(it) }
 
     fun doSearch(q: String) {
@@ -223,7 +222,7 @@ fun SearchScreen(
             Column(Modifier.weight(1f)) {
                 Text("So Novel", style = MaterialTheme.typography.headlineMedium)
                 Text(
-                    "${activeFile?.name ?: "-"} · ${searchable.size} 个可搜索书源",
+                    "已开启 ${searchable.size} 个可搜索书源",
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
@@ -318,7 +317,7 @@ fun SearchScreen(
 
             ui.results.isEmpty() && !ui.searching -> EmptyState(
                 Icons.Outlined.SearchOff, "没有找到“${ui.keyword}”",
-                "试试输入完整书名，或在“书源”页切换其他规则文件（部分书源需要代理）",
+                "试试输入完整书名，或在“书源”页开启更多书源（部分书源需要代理）",
             )
 
             else -> LazyColumn(Modifier.fillMaxSize()) {
@@ -428,7 +427,7 @@ private fun TipsCard(onLink: () -> Unit, onBatch: () -> Unit) {
     OutlinedCard(Modifier.fillMaxWidth().padding(16.dp)) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text("使用提示", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-            Text("• 聚合搜索会同时查询当前规则文件中的全部书源", style = MaterialTheme.typography.bodyMedium)
+            Text("• 聚合搜索会同时查询所有已开启的书源，可在“书源”页逐个开关", style = MaterialTheme.typography.bodyMedium)
             Text("• 找到书后可选择下载全本、指定范围或最新章节", style = MaterialTheme.typography.bodyMedium)
             Text("• 支持导出 EPUB / TXT / HTML / PDF，默认格式可在设置中修改", style = MaterialTheme.typography.bodyMedium)
             Text("• 不支持搜索的书源可通过“链接下载”粘贴详情页地址", style = MaterialTheme.typography.bodyMedium)

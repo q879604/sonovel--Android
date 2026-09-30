@@ -30,16 +30,16 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.FileOpen
 import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.NetworkCheck
 import androidx.compose.material.icons.outlined.RestartAlt
+import androidx.compose.material.icons.outlined.ToggleOff
+import androidx.compose.material.icons.outlined.ToggleOn
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
-import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -68,6 +68,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -77,6 +78,7 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.wang.sonovel.core.Misc
 import com.wang.sonovel.data.Rule
+import com.wang.sonovel.data.RuleFile
 import com.wang.sonovel.data.SourceStatus
 import com.wang.sonovel.graph
 import com.wang.sonovel.ui.components.ConfirmDialog
@@ -111,6 +113,8 @@ class SourcesViewModel(app: Application) : AndroidViewModel(app) {
     }
 }
 
+private enum class SourceFilter(val label: String) { ALL("全部"), ON("已开启"), OFF("已关闭") }
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SourcesScreen(vm: SourcesViewModel = viewModel()) {
@@ -120,14 +124,26 @@ fun SourcesScreen(vm: SourcesViewModel = viewModel()) {
     val settings by g.settings.state.collectAsStateWithLifecycle()
     val status by vm.status.collectAsStateWithLifecycle()
     val checking by vm.checking.collectAsStateWithLifecycle()
-    var selectedName by rememberSaveable { mutableStateOf(settings.activeRules) }
-    val file = files.firstOrNull { it.name == selectedName } ?: files.firstOrNull()
+    var filter by rememberSaveable { mutableStateOf(SourceFilter.ALL) }
     var detail by remember { mutableStateOf<Rule?>(null) }
     var menu by remember { mutableStateOf(false) }
     var showTemplate by remember { mutableStateOf(false) }
-    var confirmDeleteFile by remember { mutableStateOf(false) }
+    var confirmDeleteFile by remember { mutableStateOf<RuleFile?>(null) }
+    var confirmReset by remember { mutableStateOf(false) }
     val snack = rememberSnack()
     val scope = rememberCoroutineScope()
+
+    // 所有规则文件合并为一个列表；settings 变化时重新计算开关状态
+    val all = remember(files) { files.flatMap { it.rules } }
+    val enabledMap = remember(all, settings.sourceStates) { all.associate { it.key to g.rules.isEnabled(it) } }
+    val onCount = enabledMap.count { it.value }
+    val builtInFiles = remember(files) { files.filter { it.builtIn && !it.overridesBuiltIn }.map { it.name }.toSet() }
+    val searchableOn = all.count { it.searchable && enabledMap[it.key] == true }
+    val shown = when (filter) {
+        SourceFilter.ALL -> all
+        SourceFilter.ON -> all.filter { enabledMap[it.key] == true }
+        SourceFilter.OFF -> all.filter { enabledMap[it.key] != true }
+    }
 
     val importer = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
         uri ?: return@rememberLauncherForActivityResult
@@ -139,8 +155,7 @@ fun SourcesScreen(vm: SourcesViewModel = viewModel()) {
                     } ?: "custom.json"
                     val text = context.contentResolver.openInputStream(uri)!!.bufferedReader().use { it.readText() }
                     val n = g.rules.import(name, text)
-                    selectedName = if (name.endsWith(".json")) name.substringAfterLast('/') else "$name.json"
-                    "已导入 $n 个书源"
+                    "已导入 $n 个书源，默认已开启"
                 }.getOrElse { "导入失败：${it.message}" }
             }
             snack(msg)
@@ -149,8 +164,14 @@ fun SourcesScreen(vm: SourcesViewModel = viewModel()) {
 
     Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.statusBars)) {
         Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 4.dp, top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text("书源", style = MaterialTheme.typography.headlineMedium, modifier = Modifier.weight(1f))
-            IconButton(onClick = { file?.let { vm.check(it.rules) } }, enabled = !checking) {
+            Column(Modifier.weight(1f)) {
+                Text("书源", style = MaterialTheme.typography.headlineMedium)
+                Text(
+                    "已开启 $onCount / 共 ${all.size} 个 · 搜索时使用已开启的 $searchableOn 个书源",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            IconButton(onClick = { vm.check(shown) }, enabled = !checking && shown.isNotEmpty()) {
                 if (checking) CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
                 else Icon(Icons.Outlined.NetworkCheck, "检测连通性")
             }
@@ -167,65 +188,53 @@ fun SourcesScreen(vm: SourcesViewModel = viewModel()) {
                         leadingIcon = { Icon(Icons.Outlined.Description, null) },
                         onClick = { menu = false; showTemplate = true },
                     )
-                    if (file != null && (!file.builtIn || file.overridesBuiltIn)) {
-                        DropdownMenuItem(
-                            text = { Text(if (file.builtIn) "恢复内置版本" else "删除此规则文件") },
-                            leadingIcon = { Icon(Icons.Outlined.RestartAlt, null) },
-                            onClick = { menu = false; confirmDeleteFile = true },
-                        )
-                    }
+                    HorizontalDivider()
+                    DropdownMenuItem(
+                        text = { Text(if (filter == SourceFilter.ALL) "全部开启" else "开启列表中的书源") },
+                        leadingIcon = { Icon(Icons.Outlined.ToggleOn, null) },
+                        onClick = { menu = false; g.rules.setAllEnabled(shown, true) },
+                    )
+                    DropdownMenuItem(
+                        text = { Text(if (filter == SourceFilter.ALL) "全部关闭" else "关闭列表中的书源") },
+                        leadingIcon = { Icon(Icons.Outlined.ToggleOff, null) },
+                        onClick = { menu = false; g.rules.setAllEnabled(shown, false) },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("恢复默认开关") },
+                        leadingIcon = { Icon(Icons.Outlined.RestartAlt, null) },
+                        onClick = { menu = false; confirmReset = true },
+                    )
                 }
             }
         }
 
-        // 规则文件选择
         Row(
-            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 4.dp),
+            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            files.forEach { f ->
-                FilterChip(
-                    selected = f.name == file?.name,
-                    onClick = { selectedName = f.name },
-                    label = { Text("${f.name.removeSuffix(".json")} (${f.rules.size})") },
-                    leadingIcon = if (f.name == settings.activeRules) {
-                        { Icon(Icons.Outlined.CheckCircle, null, Modifier.size(18.dp)) }
-                    } else null,
-                )
-            }
-        }
-
-        if (file != null) {
-            val isActive = file.name == settings.activeRules
-            Surface(
-                color = MaterialTheme.colorScheme.surfaceContainerLow,
-                shape = RoundedCornerShape(16.dp),
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
-            ) {
-                Row(Modifier.padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text(fileDescription(file.name), style = MaterialTheme.typography.bodyMedium)
-                        Text(
-                            (if (file.builtIn) "内置" else "已导入") + (if (file.overridesBuiltIn) "（已被导入文件覆盖）" else "") +
-                                " · ${file.rules.size} 个书源",
-                            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                    if (isActive) {
-                        Pill("使用中", container = MaterialTheme.colorScheme.primary, content = MaterialTheme.colorScheme.onPrimary)
-                    } else {
-                        Button(onClick = { g.rules.setActive(file.name) }) { Text("设为当前") }
-                    }
+            SourceFilter.entries.forEach { f ->
+                val n = when (f) {
+                    SourceFilter.ALL -> all.size
+                    SourceFilter.ON -> onCount
+                    SourceFilter.OFF -> all.size - onCount
                 }
+                FilterChip(selected = filter == f, onClick = { filter = f }, label = { Text("${f.label} $n") })
             }
         }
 
+        if (shown.isEmpty()) {
+            Text(
+                if (filter == SourceFilter.ON) "还没有开启的书源，搜索将没有结果" else "没有书源",
+                style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.fillMaxWidth().padding(32.dp), textAlign = TextAlign.Center,
+            )
+        }
         LazyColumn(Modifier.fillMaxSize()) {
-            items(file?.rules.orEmpty(), key = { it.key }) { r ->
+            items(shown, key = { it.key }) { r ->
                 SourceRow(
                     rule = r,
-                    enabled = g.rules.isEnabled(r),
-                    toggleable = !r.disabled,
+                    builtIn = r.file in builtInFiles,
+                    enabled = enabledMap[r.key] == true,
                     status = status[r.key],
                     checked = status.containsKey(r.key),
                     onToggle = { g.rules.setEnabled(r, it) },
@@ -238,16 +247,31 @@ fun SourcesScreen(vm: SourcesViewModel = viewModel()) {
 
     detail?.let { r ->
         val json = remember(r) { g.rules.rawJson(r) }
+        val ruleFile = files.firstOrNull { it.name == r.file }
         ModalBottomSheet(onDismissRequest = { detail = null }, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
             Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
-                Text(r.displayName, style = MaterialTheme.typography.titleLarge)
-                Text(r.url.orEmpty(), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(r.displayName, style = MaterialTheme.typography.titleLarge)
+                        Text(r.url.orEmpty(), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+                    }
+                    Switch(checked = enabledMap[r.key] == true, onCheckedChange = { g.rules.setEnabled(r, it) })
+                }
+                Text(
+                    "来源：" + (if (ruleFile?.builtIn == true && !ruleFile.overridesBuiltIn) "内置" else "导入") + " · ${r.file}",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+                sourceNote(r)?.let {
+                    Spacer(Modifier.height(8.dp))
+                    Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.tertiary)
+                }
                 r.comment?.takeIf { it.isNotBlank() }?.let {
                     Spacer(Modifier.height(8.dp))
                     Text(it, style = MaterialTheme.typography.bodyMedium)
                 }
                 Spacer(Modifier.height(12.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(onClick = {
                         val cm = context.getSystemService(android.content.ClipboardManager::class.java)
                         cm.setPrimaryClip(ClipData.newPlainText("rule", json))
@@ -258,6 +282,11 @@ fun SourcesScreen(vm: SourcesViewModel = viewModel()) {
                         Text("复制 JSON")
                     }
                     OutlinedButton(onClick = { vm.check(listOf(r)) }) { Text("检测连通性") }
+                    if (ruleFile != null && (!ruleFile.builtIn || ruleFile.overridesBuiltIn)) {
+                        OutlinedButton(onClick = { confirmDeleteFile = ruleFile }) {
+                            Text(if (ruleFile.builtIn) "恢复内置版本" else "删除导入的文件")
+                        }
+                    }
                 }
                 Spacer(Modifier.height(12.dp))
                 Surface(color = MaterialTheme.colorScheme.surfaceContainerHigh, shape = RoundedCornerShape(12.dp)) {
@@ -300,33 +329,56 @@ fun SourcesScreen(vm: SourcesViewModel = viewModel()) {
         )
     }
 
-    if (confirmDeleteFile && file != null) {
+    confirmDeleteFile?.let { f ->
         ConfirmDialog(
-            title = if (file.builtIn) "恢复内置版本？" else "删除 ${file.name}？",
-            text = if (file.builtIn) "将删除导入的同名文件，恢复为应用内置的规则。" else "删除后该规则文件中的书源将不可用。",
-            onDismiss = { confirmDeleteFile = false },
+            title = if (f.builtIn) "恢复内置版本？" else "删除 ${f.name}？",
+            text = if (f.builtIn) "将删除导入的同名文件，恢复为应用内置的规则。"
+            else "将删除这个导入的规则文件，其中的 ${f.rules.size} 个书源都会被移除。",
+            onDismiss = { confirmDeleteFile = null },
             onConfirm = {
-                g.rules.deleteUserFile(file.name)
-                if (!file.builtIn) selectedName = "main.json"
+                g.rules.deleteUserFile(f.name)
+                detail = null
             },
+        )
+    }
+
+    if (confirmReset) {
+        ConfirmDialog(
+            title = "恢复默认开关？",
+            text = "所有书源将恢复为默认的开启状态。",
+            onDismiss = { confirmReset = false },
+            onConfirm = { g.rules.resetStates() },
         )
     }
 }
 
-private fun fileDescription(name: String) = when (name) {
-    "main.json" -> "默认书源，均支持搜索（多数需大陆 IP）"
-    "proxy-required.json" -> "需要代理（非大陆 IP），部分需配置 cf-bypass"
-    "rate-limit.json" -> "限流严重的书源，建议并发 1~5"
-    "no-search.json" -> "不支持搜索，请用“链接下载”粘贴详情页地址"
+/** 书源的使用提示（来自原先的规则文件分类） */
+private fun sourceNote(rule: Rule): String? = when (rule.file) {
+    "proxy-required.json" -> "需要代理（非大陆 IP），部分需在设置中配置 cf-bypass"
+    "rate-limit.json" -> "源站限流严重，建议并发 1~5"
     "cloudflare.json" -> "有 Cloudflare 保护，需在设置中配置 cf-bypass"
-    else -> "自定义规则文件"
+    "no-search.json" -> "不支持搜索，请用“链接下载”粘贴详情页地址"
+    else -> null
+}
+
+/** 列表中显示的标签 */
+private fun sourceTags(rule: Rule, builtIn: Boolean): List<String> = buildList {
+    when (rule.file) {
+        "proxy-required.json" -> add("需代理")
+        "rate-limit.json" -> add("限流")
+        "cloudflare.json" -> add("Cloudflare")
+    }
+    if (!builtIn) add("自定义")
+    if (!rule.searchable) add("不支持搜索")
+    if (rule.needProxy && rule.file != "proxy-required.json") add("需代理")
+    rule.crawl?.concurrency?.let { add("并发 $it") }
 }
 
 @Composable
 private fun SourceRow(
     rule: Rule,
+    builtIn: Boolean,
     enabled: Boolean,
-    toggleable: Boolean,
     status: SourceStatus?,
     checked: Boolean,
     onToggle: (Boolean) -> Unit,
@@ -339,7 +391,7 @@ private fun SourceRow(
         Column(Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    "${rule.id}. ${rule.displayName}", style = MaterialTheme.typography.titleSmall,
+                    rule.displayName, style = MaterialTheme.typography.titleSmall,
                     maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false),
                 )
                 if (checked) {
@@ -348,12 +400,7 @@ private fun SourceRow(
                 }
             }
             Text(rule.url.orEmpty(), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
-            val tags = buildList {
-                if (rule.disabled) add("已禁用")
-                if (!rule.searchable) add("不支持搜索")
-                if (rule.needProxy) add("需代理")
-                rule.crawl?.concurrency?.let { add("并发 $it") }
-            }
+            val tags = sourceTags(rule, builtIn)
             if (tags.isNotEmpty()) {
                 Row(Modifier.padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) { tags.forEach { Pill(it) } }
             }
@@ -365,7 +412,7 @@ private fun SourceRow(
             }
         }
         Spacer(Modifier.width(8.dp))
-        Switch(checked = enabled, onCheckedChange = onToggle, enabled = toggleable)
+        Switch(checked = enabled, onCheckedChange = onToggle)
     }
     HorizontalDivider(Modifier.padding(start = 20.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
 }

@@ -357,5 +357,35 @@
       "filterTag": "",
       "nextPage": "#link-next"
     }
+  },
+  {
+    "url": "https://tianyashuku.net/",
+    "name": "天涯书库",
+    "comment": "以经典名著、武侠、外国文学为主，书名目录完整。搜索结果页不含作者，程序会自动从详情页补全。部分网络小说收录不全。",
+    "language": "zh-CN",
+    "search": {
+      "url": "https://tianyashuku.net/e/search/index.php",
+      "method": "post",
+      "data": "{\"keyboard\": \"%s\", \"tbname\": \"bookname\", \"show\": \"title,writer\", \"tempid\": \"1\"}",
+      "result": "article.themebetter-ent-loop-item",
+      "bookName": "h2 > a"
+    },
+    "book": {
+      "intro": "meta[property=\"og:description\"]"
+    },
+    "toc": {
+      "item": "#list dl dd > a"
+    },
+    "chapter": {
+      "title": "div.m-article-title > h1",
+      "content": "div.m-article-text@js:r=r.replace(/<script[\\s\\S]*?<\\/script>/gi,'').replace(/<div class=\\\"m-isgood\\\">[\\s\\S]*?<\\/div>/g,'').replace(/<\\/?p(\\s[^>]*)?>/gi,'<br>');",
+      "paragraphTagClosed": false,
+      "paragraphTag": "<br>"
+    },
+    "crawl": {
+      "concurrency": 20,
+      "minInterval": 100,
+      "maxInterval": 300
+    }
   }
 ]
