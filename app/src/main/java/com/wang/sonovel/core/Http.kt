@@ -28,7 +28,13 @@ import javax.net.ssl.X509TrustManager
 import kotlin.random.Random
 
 /** 抓取到的页面：最终 URL（跟随重定向后）+ 原始字节 + 响应声明的编码 */
-class FetchedPage(val url: String, val bytes: ByteArray, val charset: String?, val code: Int) {
+class FetchedPage(
+    val url: String,
+    val bytes: ByteArray,
+    val charset: String?,
+    val code: Int,
+    val headers: Map<String, String> = emptyMap(),
+) {
     val text: String by lazy { decodeHtml(bytes, charset) }
 
     fun document(baseUri: String?): Document =
@@ -111,7 +117,9 @@ object Http {
     private fun Response.toPage(): FetchedPage {
         val bytes = body?.bytes() ?: ByteArray(0)
         if (!isSuccessful && bytes.isEmpty()) throw IOException("HTTP $code")
-        return FetchedPage(request.url.toString(), bytes, body?.contentType()?.charset()?.name(), code)
+        val hs = LinkedHashMap<String, String>()
+        headers.forEach { (k, v) -> hs[k.lowercase()] = v }
+        return FetchedPage(request.url.toString(), bytes, body?.contentType()?.charset()?.name(), code, hs)
     }
 
     /** POST 表单：值为 %s 的字段依次替换为参数 */

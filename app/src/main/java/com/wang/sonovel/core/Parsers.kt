@@ -6,6 +6,11 @@ import com.wang.sonovel.data.ChapterRef
 import com.wang.sonovel.data.CrawlConfig
 import com.wang.sonovel.data.Rule
 import com.wang.sonovel.data.SearchResult
+import com.wang.sonovel.legado.LegadoBookParser
+import com.wang.sonovel.legado.LegadoChapterParser
+import com.wang.sonovel.legado.LegadoSearchParser
+import com.wang.sonovel.legado.LegadoTocParser
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -53,7 +58,24 @@ private fun resolve(base: String, href: String?): String? {
 class SearchParser(private val ctx: SourceContext) {
     private val rule = ctx.rule
 
-    suspend fun search(keyword: String): List<SearchResult> = fillMissingAuthors(fetchResults(keyword))
+    suspend fun search(keyword: String): List<SearchResult> {
+        if (rule.isLegado) return searchLegado(keyword)
+        return fillMissingAuthors(fetchResults(keyword))
+    }
+
+    /** 「阅读」书源：交给 Legado 规则引擎 */
+    private suspend fun searchLegado(keyword: String): List<SearchResult> = withContext(Dispatchers.IO) {
+        if (rule.disabled) return@withContext emptyList()
+        delay(ctx.randomInterval())
+        val rt = LegadoEnv.runtime(rule, ctx.settings, key = keyword)
+        runCatching {
+            LegadoSearchParser(rt, rule.key, rule.displayName, ctx.settings.searchLimit)
+                .search(keyword)
+                .map { ChineseConverter.convert(it, ctx.sourceLang, ctx.targetLang) }
+        }.getOrElse {
+            throw IOException("「${rule.displayName}」搜索失败：${it.message ?: it.javaClass.simpleName}")
+        }
+    }
 
     /**
      * 搜索结果页不提供作者时（规则未配置 search.author），从详情页补全作者等信息，
@@ -197,6 +219,11 @@ class SearchParser(private val ctx: SourceContext) {
 class BookParser(private val ctx: SourceContext) {
 
     fun parse(url: String): BookInfo {
+        if (ctx.rule.isLegado) {
+            val rt = LegadoEnv.runtime(ctx.rule, ctx.settings, baseUrl = url)
+            val book = LegadoBookParser(rt, null).parse(url)
+            return ChineseConverter.convert(book, ctx.sourceLang, ctx.targetLang)
+        }
         val r = ctx.rule.book ?: Rule.Book()
         val doc = ctx.fetchDocument(url, r.timeout, r.baseUri, "详情页")
         return parseDocument(doc, url)
@@ -232,6 +259,10 @@ class BookParser(private val ctx: SourceContext) {
 class TocParser(private val ctx: SourceContext) {
 
     suspend fun parseAll(url: String): List<ChapterRef> {
+        if (ctx.rule.isLegado) {
+            val rt = LegadoEnv.runtime(ctx.rule, ctx.settings, baseUrl = url)
+            return LegadoTocParser(rt).parseAll(url)
+        }
         val tocRule = ctx.rule.toc ?: throw IOException("书源缺少目录规则")
         val bookRule = ctx.rule.book
         val idPattern = bookRule?.url?.substringBefore("@js:")?.takeIf { it.isNotBlank() }
@@ -321,6 +352,11 @@ class ChapterParser(private val ctx: SourceContext) {
 
     /** 抓取章节原始正文 HTML（含分页合并） */
     suspend fun fetchContent(url: String, interval: Long): String {
+        if (ctx.rule.isLegado) {
+            delay(interval)
+            val rt = LegadoEnv.runtime(ctx.rule, ctx.settings, baseUrl = url)
+            return LegadoChapterParser(rt).fetchContent(url)
+        }
         delay(interval)
         return if (r.nextPage.isNullOrBlank()) fetchSingle(url) else fetchPaginated(url, interval)
     }

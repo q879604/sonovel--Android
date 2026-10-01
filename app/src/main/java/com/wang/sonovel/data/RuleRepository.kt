@@ -4,6 +4,7 @@ import android.content.Context
 import com.google.gson.GsonBuilder
 import com.google.gson.JsonParser
 import com.google.gson.reflect.TypeToken
+import com.wang.sonovel.legado.LegadoImporter
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -24,6 +25,7 @@ class RuleRepository(private val context: Context, private val settings: Setting
 
     private val gson = GsonBuilder().create()
     private val userDir = File(context.filesDir, "rules").apply { mkdirs() }
+    private val legadoDir = File(context.filesDir, "legado").apply { mkdirs() }
     private val _files = MutableStateFlow<List<RuleFile>>(emptyList())
     val files: StateFlow<List<RuleFile>> = _files.asStateFlow()
 
@@ -34,10 +36,18 @@ class RuleRepository(private val context: Context, private val settings: Setting
     fun reload() {
         val builtIn = context.assets.list("rules").orEmpty().filter { it.endsWith(".json") }.sorted()
         val user = userDir.listFiles { f -> f.name.endsWith(".json") }.orEmpty().map { it.name }.sorted()
+        val legado = legadoDir.listFiles { f -> f.name.endsWith(".json") }.orEmpty().map { it.name }.sorted()
         val result = mutableListOf<RuleFile>()
-        // main.json 始终排在第一位
-        val order = (builtIn + user).distinct().sortedWith(compareBy({ it != "main.json" }, { it !in builtIn }, { it }))
+        // main.json 始终排在第一位；「阅读」书源排在最后
+        val order = (builtIn + user).distinct()
+            .sortedWith(compareBy({ it != "main.json" }, { it !in builtIn }, { it })) + legado
         for (name in order) {
+            if (name in legado) {
+                val text = runCatching { File(legadoDir, name).readText() }.getOrNull() ?: continue
+                val rules = runCatching { parseLegado(text, name) }.getOrElse { emptyList() }
+                result += RuleFile(name = name, builtIn = false, rules = rules, overridesBuiltIn = false)
+                continue
+            }
             val userFile = File(userDir, name)
             val text = runCatching {
                 if (userFile.exists()) userFile.readText()
@@ -54,6 +64,13 @@ class RuleRepository(private val context: Context, private val settings: Setting
         _files.value = result
     }
 
+    /** 解析「阅读」(Legado) 书源文件 */
+    fun parseLegado(text: String, fileName: String): List<Rule> =
+        LegadoImporter.parse(text).mapIndexed { i, src -> LegadoImporter.toRule(src, fileName, i + 1) }
+
+    /** 该文件是否为「阅读」书源文件 */
+    fun isLegadoFile(name: String): Boolean = File(legadoDir, name).exists()
+
     /** 解析规则 JSON 数组并填充默认值 */
     fun parse(text: String, fileName: String): List<Rule> {
         // 兼容 json5 风格的注释
@@ -68,6 +85,14 @@ class RuleRepository(private val context: Context, private val settings: Setting
     }
 
     fun rawJson(rule: Rule): String {
+        if (isLegadoFile(rule.file)) {
+            val text = runCatching { File(legadoDir, rule.file).readText() }.getOrDefault("")
+            return runCatching {
+                val arr = JsonParser.parseString(text).asJsonArray
+                GsonBuilder().setPrettyPrinting().disableHtmlEscaping().create()
+                    .toJson(arr[rule.id - 1])
+            }.getOrDefault(text)
+        }
         val file = File(userDir, rule.file)
         val text = if (file.exists()) file.readText()
         else context.assets.open("rules/${rule.file}").bufferedReader().use { it.readText() }
@@ -139,7 +164,34 @@ class RuleRepository(private val context: Context, private val settings: Setting
     /** 删除导入的规则文件（对内置文件则是恢复为内置版本） */
     fun deleteUserFile(name: String) {
         File(userDir, name).delete()
+        File(legadoDir, name).delete()
         reload()
+    }
+
+    /**
+     * 导入「阅读」(Legado) 书源。
+     *
+     * @param text  书源 JSON 文本
+     * @param fileName 保存的文件名（订阅地址导入时由地址推断）
+     * @param enableAll 是否把「阅读」里停用的书源也一并开启
+     * @return 导入结果描述
+     */
+    fun importLegado(text: String, fileName: String, enableAll: Boolean = false): String {
+        val name = fileName.substringAfterLast('/')
+            .let { if (it.endsWith(".json", true)) it else "$it.json" }
+            .replace(Regex("[\\\\/:*?\"<>|]"), "_")
+        val sources = LegadoImporter.parse(text)
+        require(sources.isNotEmpty()) { "未解析到书源（阅读书源应为 JSON 数组，且包含 bookSourceUrl）" }
+        val effective = if (enableAll) sources.map { it.copy(enabled = true) } else sources
+        File(legadoDir, name).writeText(LegadoImporter.toJson(effective))
+        reload()
+        val searchable = effective.count { it.searchable }
+        val off = effective.count { !it.enabled }
+        return buildString {
+            append("「$name」导入 ${effective.size} 个书源")
+            if (searchable < effective.size) append("，${effective.size - searchable} 个不支持搜索")
+            if (off > 0) append("，$off 个在阅读里是停用的（可长按书源开启）")
+        }
     }
 
     private fun hostOf(url: String): String? = runCatching { java.net.URI(url).host }.getOrNull()

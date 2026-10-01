@@ -1,5 +1,7 @@
 package com.wang.sonovel.data
 
+import com.wang.sonovel.legado.LegadoSource
+
 /**
  * 书源规则，与 so-novel 的 rules 目录下 json 格式完全兼容。
  * 字段均可为空，由 [RuleRepository] 在加载时填充默认值。
@@ -23,6 +25,13 @@ class Rule {
     /** 所属规则文件名（运行时填充，不参与序列化） */
     @Transient
     var file: String = ""
+
+    /** 「阅读」(Legado) 书源：非空时由 Legado 引擎解析（不参与序列化） */
+    @Transient
+    var legado: LegadoSource? = null
+
+    /** 是否为「阅读」格式书源 */
+    val isLegado: Boolean get() = legado != null
 
     val key: String get() = "$file#$id"
     val displayName: String get() = name?.takeIf { it.isNotBlank() } ?: url.orEmpty()

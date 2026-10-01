@@ -30,6 +30,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.CloudDownload
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.FileOpen
@@ -90,6 +91,10 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import com.wang.sonovel.legado.LegadoImporter
+import com.wang.sonovel.core.Http
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Checkbox
 
 class SourcesViewModel(app: Application) : AndroidViewModel(app) {
     private val g = app.graph
@@ -128,6 +133,7 @@ fun SourcesScreen(vm: SourcesViewModel = viewModel()) {
     var detail by remember { mutableStateOf<Rule?>(null) }
     var menu by remember { mutableStateOf(false) }
     var showTemplate by remember { mutableStateOf(false) }
+    var showUrlImport by remember { mutableStateOf(false) }
     var confirmDeleteFile by remember { mutableStateOf<RuleFile?>(null) }
     var confirmReset by remember { mutableStateOf(false) }
     val snack = rememberSnack()
@@ -182,6 +188,11 @@ fun SourcesScreen(vm: SourcesViewModel = viewModel()) {
                         text = { Text("导入规则文件（.json）") },
                         leadingIcon = { Icon(Icons.Outlined.FileOpen, null) },
                         onClick = { menu = false; importer.launch(arrayOf("application/json", "text/*", "application/octet-stream")) },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("从网络导入书源（阅读格式）") },
+                        leadingIcon = { Icon(Icons.Outlined.CloudDownload, null) },
+                        onClick = { menu = false; showUrlImport = true },
                     )
                     DropdownMenuItem(
                         text = { Text("查看规则模板") },
@@ -329,6 +340,13 @@ fun SourcesScreen(vm: SourcesViewModel = viewModel()) {
         )
     }
 
+    if (showUrlImport) {
+        LegadoImportDialog(
+            onDismiss = { showUrlImport = false },
+            onDone = { snack(it) },
+        )
+    }
+
     confirmDeleteFile?.let { f ->
         ConfirmDialog(
             title = if (f.builtIn) "恢复内置版本？" else "删除 ${f.name}？",
@@ -350,6 +368,98 @@ fun SourcesScreen(vm: SourcesViewModel = viewModel()) {
             onConfirm = { g.rules.resetStates() },
         )
     }
+}
+
+/**
+ * 「阅读」(Legado) 书源导入：支持订阅/分享链接，也支持直接粘贴书源 JSON。
+ */
+@Composable
+private fun LegadoImportDialog(onDismiss: () -> Unit, onDone: (String) -> Unit) {
+    val context = LocalContext.current
+    val g = context.graph
+    val scope = rememberCoroutineScope()
+    var url by rememberSaveable { mutableStateOf("") }
+    var enableAll by rememberSaveable { mutableStateOf(false) }
+    var busy by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+
+    fun looksLikeJson(s: String) = s.trimStart().startsWith("[") || s.trimStart().startsWith("{")
+
+    fun submit() {
+        val input = url.trim()
+        if (input.isEmpty() || busy) return
+        busy = true
+        error = null
+        scope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    val text: String
+                    val fileName: String
+                    if (looksLikeJson(input)) {
+                        text = input
+                        val name = LegadoImporter.parse(text).firstOrNull()?.name ?: "粘贴的书源"
+                        fileName = "legado-${name.take(20)}"
+                    } else {
+                        val page = Http.get(Http.client(g.settings.current), input, 30)
+                        text = page.text
+                        fileName = LegadoImporter.fileNameFor(input, LegadoImporter.parse(text))
+                    }
+                    g.rules.importLegado(text, fileName, enableAll)
+                }.getOrElse { "导入失败：${it.message}" }
+            }
+            busy = false
+            onDone(result)
+            if (!result.startsWith("导入失败")) onDismiss() else error = result
+        }
+    }
+
+    AlertDialog(
+        onDismissRequest = { if (!busy) onDismiss() },
+        title = { Text("导入「阅读」书源") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    "支持书源订阅地址、单条分享链接，也可以直接粘贴书源 JSON（阅读 App 的「书源管理 → 分享」或 shuyuan 订阅）。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                OutlinedTextField(
+                    value = url,
+                    onValueChange = { url = it; error = null },
+                    label = { Text("书源地址 / JSON") },
+                    placeholder = { Text("https://…/shuyuan.json") },
+                    singleLine = false,
+                    minLines = 3,
+                    maxLines = 6,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(checked = enableAll, onCheckedChange = { enableAll = it })
+                    Column(Modifier.weight(1f)) {
+                        Text("导入后全部开启", style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            "阅读里已停用的书源也一并开启（书源很多时会拖慢聚合搜索）",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                val cm = context.getSystemService(android.content.ClipboardManager::class.java)
+                TextButton(onClick = {
+                    val clip = cm?.primaryClip
+                    val text = clip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(context)?.toString()
+                    if (text.isNullOrBlank()) error = "剪贴板为空" else { url = text; error = null }
+                }) { Text("从剪贴板粘贴") }
+                error?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { submit() }, enabled = !busy && url.isNotBlank()) {
+                if (busy) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp) else Text("导入")
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss, enabled = !busy) { Text("取消") } },
+    )
 }
 
 /** 书源的使用提示（来自原先的规则文件分类） */
