@@ -150,16 +150,18 @@ object LegadoJsPrelude {
 
     /** JS 环境（java / cookie / source / cookie 全局函数等） */
     val JS: String = """
-    // 桥：宿主注入名为 __nativeCall 的全局函数（QuickJS 里是 JSCallFunction，Rhino 里是同名函数）
-    var __bridge = { call: function (op, a, b, c, d) { return __nativeCall(String(op), a, b, c, d); } };
-    var __B = __bridge;
+    // 桥：宿主注入全局函数 __nativeCall(op,a,b,c,d)（QuickJS 用 JSCallFunction，Rhino 用同名函数）；
+    // 同时兼容注入 __bridge 对象（{call:...}）的宿主。
     function __c(op, a, b, c, d) {
-      if (typeof __nativeCall !== 'function') return '';
+      var __fn = (typeof __nativeCall === 'function') ? __nativeCall
+        : (typeof __bridge !== 'undefined' && __bridge && typeof __bridge.call === 'function') ? function (o, x, y, z, w) { return __bridge.call(o, x, y, z, w); }
+        : null;
+      if (!__fn) return '';
       if (a === undefined || a === null) a = '';
       if (b === undefined || b === null) b = '';
       if (c === undefined || c === null) c = '';
       if (d === undefined || d === null) d = '';
-      return String(__B.call(String(op), a, b, c, d));
+      return String(__fn(String(op), a, b, c, d));
     }
     function __env(json) {
       try { return JSON.parse(json); } catch (e) { return { code: 0, headers: {}, body: '' }; }
