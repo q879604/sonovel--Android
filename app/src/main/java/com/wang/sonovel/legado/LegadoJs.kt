@@ -196,17 +196,16 @@ object LegadoJsPrelude {
       getString: function () { __c('unsupported', '', 'getString（网页模式）', '', ''); return ''; },
       setContent: function () { __c('unsupported', '', 'setContent（网页模式）', '', ''); return ''; }
     };
-    var source = {
-      bookSourceUrl: __c('baseUrl', '', '', '', '') === '' ? '' : (function () { try { return JSON.parse(__c('source', '', '', '', '')).bookSourceUrl || ''; } catch (e) { return ''; } })(),
-      getKey: function () { return __c('host', this.bookSourceUrl, '', '', ''); },
-      getVariable: function (k) { return __c('varGet', String(k), '', '', ''); },
-      setVariable: function (k, v) { return __c('varPut', String(k), v === undefined || v === null ? '' : String(v), '', ''); }
-    };
+    var source = {};
     (function () {
+      source = {
+        getKey: function () { return __c('host', source.bookSourceUrl || '', '', '', ''); },
+        getVariable: function (k) { return __c('varGet', String(k), '', '', ''); },
+        setVariable: function (k, v) { return __c('varPut', String(k), v === undefined || v === null ? '' : String(v), '', ''); }
+      };
       try {
         var s = JSON.parse(__c('source', '', '', '', ''));
         for (var k in s) if (s.hasOwnProperty(k)) source[k] = s[k];
-        if (!source.getKey) source.getKey = function () { return __c('host', source.bookSourceUrl, '', '', ''); };
       } catch (e) {}
     })();
     var cookie = {

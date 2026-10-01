@@ -109,8 +109,11 @@ class RuleRepository(private val context: Context, private val settings: Setting
     /** 书源开关的存储 key */
     fun stateKey(rule: Rule) = "${rule.file}#${rule.url}"
 
-    /** 未手动设置时的默认开关：所有书源默认开启，搜索时全部参与 */
-    fun defaultEnabled(rule: Rule): Boolean = true
+    /**
+     * 未手动设置时的默认开关。
+     * 「阅读」书源跟随其在阅读里的启用状态（停用的不参与搜索，避免拖慢聚合搜索）。
+     */
+    fun defaultEnabled(rule: Rule): Boolean = rule.legado?.enabled ?: true
 
     fun isEnabled(rule: Rule): Boolean = settings.current.sourceStates[stateKey(rule)] ?: defaultEnabled(rule)
 
