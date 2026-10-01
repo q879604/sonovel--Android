@@ -150,9 +150,11 @@ object LegadoJsPrelude {
 
     /** JS 环境（java / cookie / source / cookie 全局函数等） */
     val JS: String = """
-    var __B = (typeof __bridge !== 'undefined') ? __bridge : null;
+    // 桥：宿主注入名为 __nativeCall 的全局函数（QuickJS 里是 JSCallFunction，Rhino 里是同名函数）
+    var __bridge = { call: function (op, a, b, c, d) { return __nativeCall(String(op), a, b, c, d); } };
+    var __B = __bridge;
     function __c(op, a, b, c, d) {
-      if (!__B) return '';
+      if (typeof __nativeCall !== 'function') return '';
       if (a === undefined || a === null) a = '';
       if (b === undefined || b === null) b = '';
       if (c === undefined || c === null) c = '';

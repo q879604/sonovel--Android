@@ -11,7 +11,9 @@ import com.wang.sonovel.legado.LegadoResponse
 import com.wang.sonovel.legado.LegadoRuntime
 import com.whl.quickjs.wrapper.JSCallFunction
 import com.whl.quickjs.wrapper.QuickJSContext
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import java.nio.charset.Charset
 
 /**
@@ -61,9 +63,9 @@ class OkFetcher(private val client: okhttp3.OkHttpClient, private val timeoutSec
             val cs = charset?.let { runCatching { Charset.forName(it) }.getOrNull() } ?: Charsets.UTF_8
             val type = headers.entries.firstOrNull { it.key.equals("Content-Type", true) }?.value
                 ?: "application/x-www-form-urlencoded; charset=${cs.name()}"
-            rb.method(m, okhttp3.RequestBody.create(body.toByteArray(cs), okhttp3.MediaType.parse(type)))
+            rb.method(m, body.toByteArray(cs).toRequestBody(type.toMediaTypeOrNull()))
         } else if (m != "GET") {
-            rb.method(m, okhttp3.RequestBody.create(ByteArray(0), null))
+            rb.method(m, ByteArray(0).toRequestBody(null))
         }
         return try {
             Http.execute(client, rb.build(), timeoutSec).let { page ->
@@ -89,18 +91,18 @@ class QuickJs : LegadoJsRunner {
             val api = LegadoJsApi(runtime)
             api.onLog = { Log.d("LegadoJs", it) }
             api.onToast = { }
-            val bridge = ctx.createNewJSObject()
-            bridge.setProperty("call", JSCallFunction { args ->
+            // 全局函数 __nativeCall(op, a, b, c, d)：QuickJS 侧用 JSCallFunction 桥接回 Kotlin
+            ctx.getGlobalObject().setProperty("__nativeCall", JSCallFunction { args ->
                 val a = args.takeLast(5)
                 api.call(
                     a.getOrNull(0), a.getOrNull(1), a.getOrNull(2), a.getOrNull(3), a.getOrNull(4),
                 )
             })
-            ctx.getGlobalObject().setProperty("__bridge", bridge as com.whl.quickjs.wrapper.JSObject?)
 
-            val boot = LegadoJsPrelude.bootstrap(runtime) + "\n" + LegadoJsPrelude.JS
-            ctx.evaluate(boot)
-            val out = ctx.evaluate(LegadoJsPrelude.wrap(code, input))
+            // 单次求值：环境变量 + 预置库 + 规则（wrap 内部自带预置库，避免依赖多次 evaluate 的全局作用域）
+            val script = LegadoJsPrelude.bootstrap(runtime) + "\n" +
+                LegadoJsPrelude.wrap(code, input)
+            val out = ctx.evaluate(script)
             when (out) {
                 null -> ""
                 is String -> out
